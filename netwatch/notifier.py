@@ -28,7 +28,7 @@ class Event:
     ts: datetime = field(default_factory=datetime.now)
 
 
-def build_card(ev: Event) -> dict:
+def build_card(ev: Event, public_url: str = "", signer=None) -> dict:
     label = CATEGORY_LABELS.get(ev.category, ev.category)
     client = f"{ev.hostname} ({ev.client})" if ev.hostname else ev.client
     facts = [
@@ -51,6 +51,12 @@ def build_card(ev: Event) -> dict:
             {"type": "FactSet", "facts": facts},
         ],
     }
+    if public_url and signer is not None:
+        card["actions"] = [
+            {"type": "Action.OpenUrl", "title": "Falsch-Alarm melden",
+             "url": signer.feedback_url(public_url, ev.site)},
+            {"type": "Action.OpenUrl", "title": "Webseiten verwalten", "url": public_url.rstrip("/") + "/"},
+        ]
     return {
         "type": "message",
         "attachments": [{
@@ -62,14 +68,17 @@ def build_card(ev: Event) -> dict:
 
 
 class TeamsNotifier:
-    def __init__(self, webhook_url: str, timeout: float = 10.0, retries: int = 3, dry_run: bool = False):
+    def __init__(self, webhook_url: str, timeout: float = 10.0, retries: int = 3, dry_run: bool = False,
+                 public_url: str = "", signer=None):
         self.webhook_url = webhook_url
+        self.public_url = public_url
+        self.signer = signer
         self.timeout = timeout
         self.retries = retries
         self.dry_run = dry_run or not webhook_url
 
     def send(self, ev: Event) -> bool:
-        payload = build_card(ev)
+        payload = build_card(ev, self.public_url, self.signer)
         if self.dry_run:
             log.warning("[DRY-RUN] Alarm: %s -> %s (%s)", ev.client, ev.site, ev.category)
             return True

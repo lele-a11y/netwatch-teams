@@ -9,3 +9,4 @@ services:
       - ./data:/data
     environment:
       - TEAMS_WEBHOOK_URL=${TEAMS_WEBHOOK_URL:-}
+      - NETWATCH_WEB_PASSWORD=${NETWATCH_WEB_PASSWORD:-}

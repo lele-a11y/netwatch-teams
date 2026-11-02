@@ -178,6 +178,7 @@ def test_cli_pcap_end_to_end(tmp_path, monkeypatch):
     f = tmp_path / "t.pcap"
     wrpcap(str(f), pkts)
     cfg = tmp_path / "c.yaml"
-    cfg.write_text("teams:\n  webhook_url: https://example.invalid/hook\nalerts:\n  resolve_hostnames: false\n")
+    cfg.write_text("teams:\n  webhook_url: https://example.invalid/hook\nalerts:\n  resolve_hostnames: false\n"
+                   f"learning:\n  data_dir: {tmp_path / 'data'}\n  fetch_content: false\n")
     assert main(["-c", str(cfg), "pcap", str(f)]) == 0
     assert sorted((e.client, e.category) for e in sent) == [("10.0.0.5", "youtube"), ("10.0.0.6", "proxy")]

@@ -1,4 +1,4 @@
-"""Domain classification: static rules + keyword heuristics + optional LLM."""
+"""Domain classification: learned sites + static rules + keyword heuristics + self-learning model + optional LLM."""
 from __future__ import annotations
 
 import json
@@ -42,6 +42,8 @@ DEFAULT_RULES: dict[str, list[str]] = {
         "geforcenow.com", "nvidiagrid.net", "xcloud.xbox.com", "fortnite.com",
         "chess.com", "lichess.org", "gameflare.com", "kizi.com", "silvergames.com",
         "1001spiele.de", "spielaffe.de", "jetztspielen.de", "gamepix.com",
+        "geforcenow.nvidia.com", "now.gg", "bloxd.io", "moomoo.io", "smashkarts.io",
+        "1v1.lol", "zombsroyale.io", "surviv.io", "skribbl.io", "gartic.io", "venge.io",
     ],
     PROXY: [
         "browser.lol", "hyperbeam.com", "neverinstall.com", "browserling.com",
@@ -123,16 +125,24 @@ class Classifier:
         ignore: Optional[list[str]] = None,
         use_keywords: bool = True,
         ai: Optional["AIClassifier"] = None,
+        learner=None,
     ):
         self.rules = {k: [normalize(s) for s in v] for k, v in (rules or DEFAULT_RULES).items()}
         self.ignore = [normalize(s) for s in (ignore if ignore is not None else DEFAULT_IGNORE)]
         self.use_keywords = use_keywords
         self.ai = ai
+        self.learner = learner
 
     def classify(self, domain: str) -> Verdict:
         d = normalize(domain)
         if not is_valid_domain(d):
             return Verdict(NONE, "ignore", d, "invalid domain")
+
+        if self.learner is not None:
+            hit = self.learner.lookup(d)
+            if hit:
+                site, entry = hit
+                return Verdict(entry["category"], "learned", site, entry.get("note") or "von Hand gemeldet")
 
         for category, suffixes in self.rules.items():
             for s in suffixes:
@@ -149,10 +159,25 @@ class Classifier:
                 _, category, kw = max(hits)
                 return Verdict(category, "keyword", base_site(d), f"keyword '{kw}'")
 
-        if self.ai is not None:
-            return self.ai.classify(d)
+        site = base_site(d)
+        if self.learner is not None:
+            cached = self.learner.cached(site)
+            if cached:
+                return Verdict(cached["category"], "cache", site, cached.get("reason", ""))
+            pred = self.learner.predict(d)
+            if pred:
+                cat, _, source, reason = pred
+                if source == "ml":
+                    self.learner.remember(site, cat, "ml", reason, train_content=False)
+                return Verdict(cat, source, site, reason)
 
-        return Verdict(NONE, "rule", base_site(d))
+        if self.ai is not None:
+            v = self.ai.classify(d)
+            if self.learner is not None and v.source == "ai" and v.reason != "ai error":
+                self.learner.remember(site, v.category, "ai", v.reason, text=self.learner.last_text_for(site))
+            return v
+
+        return Verdict(NONE, "default", site)
 
 
 AI_PROMPT = """You classify internet domains seen in network traffic of a school/office network.

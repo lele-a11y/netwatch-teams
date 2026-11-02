@@ -5,5 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY netwatch ./netwatch
 ENV NETWATCH_CONFIG=/config/config.yaml
+WORKDIR /data
+EXPOSE 8080
 ENTRYPOINT ["python", "-m", "netwatch"]
 CMD ["run"]

@@ -5,3 +5,4 @@ config.yaml
 ai_cache.json
 .pytest_cache/
 *.egg-info/
+data/

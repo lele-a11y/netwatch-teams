@@ -29,11 +29,31 @@ ai:
   # KI-Klassifizierung für unbekannte Domains über eine OpenAI-kompatible API.
   # Lokal & datenschutzfreundlich mit Ollama:  ollama pull llama3.1:8b
   # OpenAI:  base_url: https://api.openai.com/v1, model: gpt-4o-mini, api_key via NETWATCH_AI_API_KEY
+  # Mit aktiviertem Lernen trainiert jede LLM-Antwort das lokale Modell -> mit der Zeit weniger LLM-Anfragen.
   enabled: false
   base_url: "http://localhost:11434/v1"
   model: "llama3.1:8b"
   api_key: ""
-  cache_file: "ai_cache.json"
+
+learning:
+  # Selbstlernende KI: lokale Modelle für Domainnamen und Seiteninhalte, die aus deinen Meldungen,
+  # Falsch-Alarm-Rückmeldungen und LLM-Antworten laufend dazulernen.
+  enabled: true
+  data_dir: "data"           # hier liegen learned.json (Seiten + Modelle) und secret.key
+  fetch_content: true        # Startseite unbekannter Domains abrufen und Inhalt analysieren
+  threshold: 0.85            # ab dieser Sicherheit meldet das lokale Modell selbst Alarm
+  none_threshold: 0.9        # ab dieser Sicherheit gilt eine Seite als harmlos (kein LLM nötig)
+
+web:
+  # Web-Oberfläche: neue Webseiten melden, Falsch-Alarme korrigieren, Domains testen.
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+  password: ""               # Benutzer "admin". Ohne Passwort nur auf 127.0.0.1 erreichbar!
+                             # (oder Umgebungsvariable NETWATCH_WEB_PASSWORD)
+  public_url: ""             # z.B. http://192.168.1.10:8080 – dann bekommt jede Teams-Nachricht
+                             # die Buttons "Falsch-Alarm melden" und "Webseiten verwalten"
+  secret: ""                 # leer = wird automatisch erzeugt (data/secret.key)
 
 logging:
   level: INFO
