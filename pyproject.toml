@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netwatch-teams"
+version = "1.0.0"
+description = "Erkennt YouTube-, Gaming- und Proxy-Seiten im Netzwerkverkehr und meldet sie via Microsoft-Teams-Webhook"
+requires-python = ">=3.9"
+dependencies = ["scapy>=2.5,<3", "PyYAML>=6.0", "requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+netwatch = "netwatch.main:main"
+
+[tool.setuptools]
+packages = ["netwatch"]

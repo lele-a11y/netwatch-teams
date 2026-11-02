@@ -1,0 +1,39 @@
+# Kopieren nach config.yaml und anpassen.
+
+teams:
+  # Teams-Kanal -> "..." -> Workflows -> "Post to a channel when a webhook request is received"
+  # (oder alter "Incoming Webhook"-Connector). Alternativ: Umgebungsvariable TEAMS_WEBHOOK_URL.
+  webhook_url: ""
+
+capture:
+  interface: null            # z.B. eth0, br-lan; null = Standard-Interface
+  bpf_filter: "udp port 53 or tcp port 53 or tcp port 443"
+  ignore_clients: []         # IPs, die nie gemeldet werden (z.B. der DNS-Server/Router selbst)
+
+alerts:
+  categories: [youtube, gaming, proxy]
+  cooldown_minutes: 10       # pro Gerät max. eine Meldung je Kategorie (bzw. Seite) in diesem Zeitraum
+  dedupe_by: category        # category | site
+  resolve_hostnames: true    # Reverse-DNS, damit im Teams-Post der Gerätename steht
+
+rules:
+  keywords: true             # Heuristik: "proxy", "unblock", "games" ... im Domainnamen
+  extra:                     # eigene Domains ergänzen
+    youtube: []
+    gaming: []
+    proxy: []
+  allow: []                  # Domains, die nie gemeldet werden (z.B. lernspiele.example.ch)
+  ignore: []                 # zusätzliche Infrastruktur-Domains, die nicht an die KI gehen
+
+ai:
+  # KI-Klassifizierung für unbekannte Domains über eine OpenAI-kompatible API.
+  # Lokal & datenschutzfreundlich mit Ollama:  ollama pull llama3.1:8b
+  # OpenAI:  base_url: https://api.openai.com/v1, model: gpt-4o-mini, api_key via NETWATCH_AI_API_KEY
+  enabled: false
+  base_url: "http://localhost:11434/v1"
+  model: "llama3.1:8b"
+  api_key: ""
+  cache_file: "ai_cache.json"
+
+logging:
+  level: INFO

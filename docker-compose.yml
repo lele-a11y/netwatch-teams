@@ -1,0 +1,11 @@
+services:
+  netwatch:
+    build: .
+    network_mode: host        # nötig, um den Traffic des Hosts/Netzes zu sehen
+    cap_add: [NET_RAW, NET_ADMIN]
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./data:/data
+    environment:
+      - TEAMS_WEBHOOK_URL=${TEAMS_WEBHOOK_URL:-}

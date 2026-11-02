@@ -1,0 +1,17 @@
+[Unit]
+Description=netwatch – Teams-Alarm bei YouTube/Gaming/Proxy-Seiten
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/netwatch
+ExecStart=/opt/netwatch/.venv/bin/netwatch -c /opt/netwatch/config.yaml run
+Restart=always
+RestartSec=5
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+DynamicUser=yes
+StateDirectory=netwatch
+
+[Install]
+WantedBy=multi-user.target
