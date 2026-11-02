@@ -15,7 +15,7 @@ from typing import Iterable, Optional
 import yaml
 
 from . import __version__
-from .classifier import (AIClassifier, Classifier, DEFAULT_IGNORE, DEFAULT_RULES, NONE,
+from .classifier import (AIClassifier, Classifier, DEFAULT_ALLOW, DEFAULT_IGNORE, DEFAULT_RULES, NONE,
                          YOUTUBE, _matches, normalize)
 from .devices import DeviceRegistry
 from .learning import CATEGORIES, LearningStore
@@ -113,6 +113,7 @@ def build_classifier(cfg: dict, learner: Optional[LearningStore] = None) -> Clas
         ai = AIClassifier(cfg["ai"]["base_url"], cfg["ai"]["model"], cfg["ai"].get("api_key", ""),
                           cache_file=cfg["ai"].get("cache_file"))
     return Classifier(rules=rules, ignore=DEFAULT_IGNORE + list(cfg["rules"].get("ignore") or []),
+                      allow=DEFAULT_ALLOW + list(cfg["rules"].get("allow") or []),
                       use_keywords=cfg["rules"].get("keywords", True), ai=ai, learner=learner)
 
 

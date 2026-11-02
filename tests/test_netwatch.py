@@ -182,3 +182,12 @@ def test_cli_pcap_end_to_end(tmp_path, monkeypatch):
                    f"learning:\n  data_dir: {tmp_path / 'data'}\n  fetch_content: false\n")
     assert main(["-c", str(cfg), "pcap", str(f)]) == 0
     assert sorted((e.client, e.category) for e in sent) == [("10.0.0.5", "youtube"), ("10.0.0.6", "proxy")]
+
+
+def test_default_allow_excludes_dungeongame():
+    from netwatch.classifier import Classifier
+    c = Classifier()
+    for d in ["dungeongame.ch", "www.dungeongame.ch", "play.dungeongame.ch"]:
+        v = c.classify(d)
+        assert not v.flagged
+        assert v.source == "allow"

@@ -71,6 +71,12 @@ KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
+# Sites that should never raise an alert (allow-list). Unlike DEFAULT_IGNORE this wins even over
+# rules/keywords and user-taught categories, so an explicitly allowed site is truly never reported.
+DEFAULT_ALLOW = [
+    "dungeongame.ch",
+]
+
 # Infrastructure that should never trigger (CDNs, OS telemetry, etc.).
 DEFAULT_IGNORE = [
     "in-addr.arpa", "ip6.arpa", "local", "localhost", "lan", "home.arpa",
@@ -85,7 +91,7 @@ _LABEL_RE = re.compile(r"^[a-z0-9-]{1,63}$")
 @dataclass(frozen=True)
 class Verdict:
     category: str
-    source: str  # rule | keyword | ai | cache | ignore
+    source: str  # allow | rule | keyword | ai | cache | ignore
     site: str    # registrable-ish domain used for grouping alerts
     reason: str = ""
 
@@ -126,9 +132,11 @@ class Classifier:
         use_keywords: bool = True,
         ai: Optional["AIClassifier"] = None,
         learner=None,
+        allow: Optional[list[str]] = None,
     ):
         self.rules = {k: [normalize(s) for s in v] for k, v in (rules or DEFAULT_RULES).items()}
         self.ignore = [normalize(s) for s in (ignore if ignore is not None else DEFAULT_IGNORE)]
+        self.allow = [normalize(s) for s in (allow if allow is not None else DEFAULT_ALLOW)]
         self.use_keywords = use_keywords
         self.ai = ai
         self.learner = learner
@@ -137,6 +145,10 @@ class Classifier:
         d = normalize(domain)
         if not is_valid_domain(d):
             return Verdict(NONE, "ignore", d, "invalid domain")
+
+        for s in self.allow:
+            if _matches(d, s):
+                return Verdict(NONE, "allow", base_site(d), f"ausgeschlossen ({s})")
 
         if self.learner is not None:
             hit = self.learner.lookup(d)
