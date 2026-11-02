@@ -15,11 +15,47 @@ Nachricht (Adaptive Card) in einen Microsoft-Teams-Kanal, wenn ein Gerät
    HTTPS-Inhalte werden *nicht* entschlüsselt.
 2. **Regeln** – kuratierte Domainlisten pro Kategorie (`netwatch/classifier.py`, erweiterbar in der Config).
 3. **Heuristik** – Schlüsselwörter im Domainnamen (`proxy`, `unblock`, `unblocked-games`, `spiele` …).
-4. **KI** (optional) – unbekannte Domains klassifiziert ein LLM (OpenAI-kompatible API: lokal mit
-   **Ollama** oder OpenAI). Ergebnisse werden pro Seite gecacht, jede Seite wird nur einmal gefragt.
-   Fällt die KI aus, läuft die Überwachung weiter.
-5. **Cooldown** – pro Gerät und Kategorie max. eine Meldung alle 10 Minuten (einstellbar),
+4. **Selbstlernende KI** (standardmässig an) – zwei lokale Modelle (Naive Bayes, ohne Cloud):
+   * **Domain-Modell** lernt aus Buchstabenfolgen im Domainnamen (`…games…`, `…proxy…`, `….io`)
+   * **Inhalts-Modell** ruft die Startseite unbekannter Domains ab und lernt aus Titel, Beschreibung und Text
+     (Bot-Schutz-/Fehlerseiten werden ignoriert, interne IPs werden nie abgerufen)
+
+   Die Modelle lernen laufend aus **deinen Meldungen** (Web-Oberfläche/CLI/API), aus
+   **Falsch-Alarm-Rückmeldungen** (Button in Teams) und aus den Antworten des LLM.
+   Selbst erkannte Seiten werden gespeichert und sind in der Web-Oberfläche korrigierbar.
+5. **LLM** (optional) – was das lokale Modell nicht sicher erkennt, klassifiziert ein LLM
+   (OpenAI-kompatible API: lokal mit **Ollama** oder OpenAI). Jede Antwort trainiert das lokale Modell,
+   dadurch braucht es mit der Zeit immer weniger LLM-Anfragen. Fällt das LLM aus, läuft alles weiter.
+6. **Cooldown** – pro Gerät und Kategorie max. eine Meldung alle 10 Minuten (einstellbar),
    damit ein YouTube-Video nicht 50 Nachrichten erzeugt.
+
+## Neue Webseiten melden (Web-Oberfläche)
+
+![Web-Oberfläche](docs/web-ui.png)
+
+`netwatch run` startet automatisch eine Web-Oberfläche (Port 8080, Benutzer `admin`,
+Passwort aus `web.password` bzw. `NETWATCH_WEB_PASSWORD`). Ohne Passwort ist sie nur lokal (127.0.0.1) erreichbar.
+
+* **Neue Webseite melden** – URL oder Domain + Kategorie eingeben → wird sofort erkannt (inkl. Subdomains),
+  die KI lernt zusätzlich aus Name und Inhalt der Seite und erkennt so ähnliche Seiten selbst.
+  Kategorie **„Erlaubt“** = nie melden (z.B. Lernspiele).
+* **Domain testen** – zeigt, wie eine Domain eingestuft würde und warum.
+* **Letzte Alarme** mit Button **Falsch-Alarm**, Liste der gemeldeten und der von der KI selbst gelernten Seiten.
+* Ist `web.public_url` gesetzt (z.B. `http://192.168.1.10:8080`), hat jede Teams-Nachricht die Buttons
+  **„Falsch-Alarm melden“** und **„Webseiten verwalten“** (signierte Links, kein Login nötig für die Rückmeldung).
+
+Weitere Wege, Seiten einzuschicken:
+
+```bash
+netwatch -c config.yaml add gaming https://www.neueseite.io bloxd.io --note "von Lehrer gemeldet"
+netwatch -c config.yaml add none www.lernspiel.ch          # erlauben
+netwatch -c config.yaml remove neueseite.io
+curl -u admin:PASSWORT -X POST -H 'Content-Type: application/json' \
+     -d '{"site":"neueseite.io","category":"proxy"}' http://netwatch:8080/api/sites
+```
+API: `GET/POST/DELETE /api/sites`, `GET /api/classify?domain=…`, `GET /api/alerts`, `GET /api/learned`, `GET /api/status`.
+
+Alles Gelernte liegt in `data/learned.json` (Pfad: `learning.data_dir`) – fürs Backup diese Datei sichern.
 
 ## Wo muss es laufen?
 
@@ -51,7 +87,8 @@ Der alte „Incoming Webhook“-Connector funktioniert auch, wird von Microsoft 
 ## Benutzung
 
 ```bash
-sudo .venv/bin/netwatch -c config.yaml run -i eth0   # Live-Überwachung
+sudo .venv/bin/netwatch -c config.yaml run -i eth0   # Live-Überwachung + Web-Oberfläche
+.venv/bin/netwatch -c config.yaml web                # nur Web-Oberfläche
 .venv/bin/netwatch -c config.yaml --dry-run run      # nur loggen, nichts senden
 .venv/bin/netwatch classify browser.lol poki.com www.srf.ch   # Klassifizierung testen
 .venv/bin/netwatch -c config.yaml pcap mitschnitt.pcap       # pcap auswerten
@@ -67,13 +104,13 @@ sudo cp netwatch.service /etc/systemd/system/
 sudo systemctl enable --now netwatch
 journalctl -u netwatch -f
 ```
-Bei aktivierter KI im Dienst `ai.cache_file: /var/lib/netwatch/ai_cache.json` setzen.
+Der Dienst läuft in `/var/lib/netwatch` – dort liegt dann auch `data/learned.json`.
 
 ### Docker
 
 ```bash
-cp config.example.yaml config.yaml   # bei KI: ai.cache_file: /data/ai_cache.json
-docker compose up -d --build
+cp config.example.yaml config.yaml
+docker compose up -d --build         # Gelerntes landet in ./data
 ```
 
 ### KI aktivieren (lokal mit Ollama)
@@ -89,6 +126,7 @@ ai:
 ```
 Für OpenAI: `base_url: https://api.openai.com/v1`, `model: gpt-4o-mini`, Key via `NETWATCH_AI_API_KEY`.
 Achtung: dann gehen die unbekannten Domainnamen an OpenAI.
+Ohne LLM funktioniert die selbstlernende KI trotzdem (Regeln + lokale Modelle + deine Meldungen).
 
 ## Grenzen
 
