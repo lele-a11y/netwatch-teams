@@ -31,6 +31,12 @@ from .classifier import (CATEGORY_LABELS, DEFAULT_RULES, GAMING, NONE, PROXY, YO
 
 log = logging.getLogger(__name__)
 
+
+def _file_sig(path: str) -> tuple:
+    """Detects changes even within the filesystem's mtime granularity (os.replace -> new inode)."""
+    st = os.stat(path)
+    return (st.st_mtime_ns, st.st_ino, st.st_size)
+
 CATEGORIES = (YOUTUBE, GAMING, PROXY, NONE)
 
 BENIGN_SEED = [
@@ -298,7 +304,7 @@ class LearningStore:
             self.domain_model = NaiveBayes.from_dict(data.get("domain_model", {}), 3.0)
             self.content_model = NaiveBayes.from_dict(data.get("content_model", {}), 5.0)
             self.stats = defaultdict(int, data.get("stats", {}))
-            self._mtime = os.path.getmtime(self.path)
+            self._mtime = _file_sig(self.path)
             log.info("Lernspeicher geladen: %d Seiten, %d gelernte Verdikte", len(self.sites), len(self.auto))
         except FileNotFoundError:
             self._bootstrap()
@@ -318,12 +324,12 @@ class LearningStore:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
             os.replace(tmp, self.path)
-            self._mtime = os.path.getmtime(self.path)
+            self._mtime = _file_sig(self.path)
 
     def refresh(self) -> None:
         """Reload if another process (CLI `add`, web UI, monitor) changed the file."""
         try:
-            mtime = os.path.getmtime(self.path)
+            mtime = _file_sig(self.path)
         except OSError:
             return
         if mtime != self._mtime:

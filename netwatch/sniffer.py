@@ -47,7 +47,7 @@ def parse_sni(payload: bytes) -> Optional[str]:
 
 def observations_from_packet(pkt) -> Iterator[Observation]:
     from scapy.layers.dns import DNS, DNSQR
-    from scapy.layers.inet import IP, TCP
+    from scapy.layers.inet import IP, TCP, UDP
     from scapy.layers.inet6 import IPv6
 
     if IP in pkt:
@@ -56,6 +56,9 @@ def observations_from_packet(pkt) -> Iterator[Observation]:
         src = pkt[IPv6].src
     else:
         return
+
+    if pkt.haslayer(UDP) and pkt[UDP].dport == 5353:
+        return  # mDNS/Bonjour (local device names) – handled by devices.DeviceRegistry
 
     if pkt.haslayer(DNS):
         dns = pkt[DNS]

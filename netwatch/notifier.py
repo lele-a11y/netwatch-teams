@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlencode
 
 import requests
 
@@ -24,18 +25,34 @@ class Event:
     source: str        # dns | sni | log
     detected_by: str   # rule | keyword | ai | cache
     reason: str = ""
-    hostname: str = ""
+    hostname: str = ""   # name announced by the device / DHCP / reverse DNS
+    device: str = ""     # name you gave the device (web UI / CLI / config)
+    mac: str = ""
     ts: datetime = field(default_factory=datetime.now)
+
+
+def device_name(ev: Event) -> str:
+    return ev.device or ev.hostname
+
+
+def device_label(ev: Event) -> str:
+    name = device_name(ev)
+    return f"{name} ({ev.client})" if name else ev.client
 
 
 def build_card(ev: Event, public_url: str = "", signer=None) -> dict:
     label = CATEGORY_LABELS.get(ev.category, ev.category)
-    client = f"{ev.hostname} ({ev.client})" if ev.hostname else ev.client
+    name = device_name(ev)
     facts = [
+        {"title": "Gerät", "value": name or "unbekannt (in der Web-Oberfläche benennen)"},
+        {"title": "IP-Adresse", "value": ev.client},
+    ]
+    if ev.mac:
+        facts.append({"title": "MAC-Adresse", "value": ev.mac})
+    facts += [
         {"title": "Kategorie", "value": label},
         {"title": "Seite", "value": ev.site},
         {"title": "Domain", "value": ev.domain},
-        {"title": "Gerät", "value": client},
         {"title": "Zeit", "value": ev.ts.strftime("%d.%m.%Y %H:%M:%S")},
         {"title": "Erkannt via", "value": f"{ev.source.upper()} / {ev.detected_by}"
                                            + (f" – {ev.reason}" if ev.reason else "")},
@@ -46,8 +63,8 @@ def build_card(ev: Event, public_url: str = "", signer=None) -> dict:
         "version": "1.4",
         "body": [
             {"type": "TextBlock", "size": "Large", "weight": "Bolder", "color": "Attention",
-             "text": f"⚠️ {label} aufgerufen", "wrap": True},
-            {"type": "TextBlock", "text": f"**{client}** hat **{ev.site}** geöffnet.", "wrap": True},
+             "text": f"⚠️ {label} aufgerufen" + (f" – {name}" if name else ""), "wrap": True},
+            {"type": "TextBlock", "text": f"**{name or ev.client}** hat **{ev.site}** geöffnet.", "wrap": True},
             {"type": "FactSet", "facts": facts},
         ],
     }
@@ -57,6 +74,10 @@ def build_card(ev: Event, public_url: str = "", signer=None) -> dict:
              "url": signer.feedback_url(public_url, ev.site)},
             {"type": "Action.OpenUrl", "title": "Webseiten verwalten", "url": public_url.rstrip("/") + "/"},
         ]
+        if not ev.device:
+            q = urlencode({"device": ev.mac or ev.client})
+            card["actions"].append({"type": "Action.OpenUrl", "title": "Gerät benennen",
+                                    "url": f"{public_url.rstrip('/')}/?{q}#geraete"})
     return {
         "type": "message",
         "attachments": [{
@@ -80,13 +101,13 @@ class TeamsNotifier:
     def send(self, ev: Event) -> bool:
         payload = build_card(ev, self.public_url, self.signer)
         if self.dry_run:
-            log.warning("[DRY-RUN] Alarm: %s -> %s (%s)", ev.client, ev.site, ev.category)
+            log.warning("[DRY-RUN] Alarm: %s -> %s (%s)", device_label(ev), ev.site, ev.category)
             return True
         for attempt in range(1, self.retries + 1):
             try:
                 r = requests.post(self.webhook_url, json=payload, timeout=self.timeout)
                 if r.status_code < 300:
-                    log.info("Teams-Nachricht gesendet: %s -> %s", ev.client, ev.site)
+                    log.info("Teams-Nachricht gesendet: %s -> %s", device_label(ev), ev.site)
                     return True
                 if r.status_code == 429:
                     time.sleep(float(r.headers.get("Retry-After", 2 * attempt)))

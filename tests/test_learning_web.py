@@ -8,6 +8,7 @@ import urllib.request
 import pytest
 
 from netwatch import classifier as C
+from netwatch.devices import DeviceRegistry
 from netwatch.learning import (LearningStore, NaiveBayes, domain_features, extract_text,
                                parse_site_input, text_features)
 from netwatch.main import DEFAULT_CONFIG, Monitor, _merge, build_classifier
@@ -148,8 +149,9 @@ def test_card_has_feedback_buttons():
 def web(tmp_path):
     s = store(tmp_path, fetch_content=False)
     cfg = _merge(DEFAULT_CONFIG, {"alerts": {"resolve_hostnames": False}})
-    m = Monitor(cfg, build_classifier(cfg, s), FakeNotifier(), async_send=False)
-    app = App(s, m.classifier, m, password="geheim", secret="testsecret", public_url="http://x")
+    devices = DeviceRegistry(str(tmp_path / "data"), arp_reader=dict, dns_resolver=lambda ip: "", lease_files=[])
+    m = Monitor(cfg, build_classifier(cfg, s), FakeNotifier(), async_send=False, devices=devices)
+    app = App(s, m.classifier, m, password="geheim", secret="testsecret", public_url="http://x", devices=devices)
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_port}", app, m
@@ -221,3 +223,23 @@ def test_web_feedback_link(web):
     code, body, _ = req(base + "/feedback", q, auth=False)
     assert code == 200 and app.store.sites["poki.com"]["category"] == "none"
     assert m.classifier.classify("poki.com").category == "none"
+
+
+def test_web_devices(web):
+    base, app, m = web
+    m.handle("192.168.1.23", "www.youtube.com", "dns")
+    code, body, _ = req(base + "/")
+    assert "Geräte" in body and "benennen" in body
+    code, body, _ = req(base + "/?device=192.168.1.23")
+    assert 'value="192.168.1.23"' in body
+    assert req(base + "/devices", {"device": "192.168.1.23", "name": "iPad 07"})[0] == 403  # no csrf
+    code, _, h = req(base + "/devices", {"device": "192.168.1.23", "name": "iPad 07", "csrf": app.csrf})
+    assert code == 303 and app.devices.identify("192.168.1.23").label == "iPad 07"
+    code, body, _ = req(base + "/api/devices", json_body={"device": "AA-BB-CC-DD-EE-01", "name": "iPad 08"})
+    assert code == 201 and json.loads(body)["device"] == "aa:bb:cc:dd:ee:01"
+    assert req(base + "/api/devices", json_body={"device": "kaputt", "name": "x"})[0] == 400
+    names = {d["key"]: d["name"] for d in json.loads(req(base + "/api/devices")[1])}
+    assert names == {"192.168.1.23": "iPad 07", "aa:bb:cc:dd:ee:01": "iPad 08"}
+    assert req(base + "/api/devices?device=aa:bb:cc:dd:ee:01", method="DELETE")[0] == 200
+    req(base + "/devices/delete", {"device": "192.168.1.23", "csrf": app.csrf})
+    assert app.devices.identify("192.168.1.23").name == ""

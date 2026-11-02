@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from .classifier import CATEGORY_LABELS, NONE
 from .learning import CATEGORIES, LearningStore, parse_site_input
+from .notifier import device_label
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ main{max-width:1100px;margin:0 auto;padding:16px}
 section{background:#fff;border-radius:8px;padding:16px 20px;margin-bottom:16px;box-shadow:0 1px 3px #0002}
 h2{margin-top:0;font-size:17px}
 input,select,button{font-size:14px;padding:7px 9px;border:1px solid #bbb;border-radius:5px}
-input[name=site],input[name=domain]{width:320px}button{background:#464eb8;color:#fff;border:0;cursor:pointer}
+input[name=site],input[name=domain]{width:320px}input[name=name]{width:200px}button{background:#464eb8;color:#fff;border:0;cursor:pointer}
 button.ghost{background:#eee;color:#333}button.danger{background:#c4314b}
 table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee}
 .tag{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;color:#fff}
@@ -76,8 +77,9 @@ def tag(cat: str) -> str:
 
 class App:
     def __init__(self, store: LearningStore, classifier, monitor=None, password: str = "",
-                 secret: str = "", public_url: str = ""):
+                 secret: str = "", public_url: str = "", devices=None):
         self.store = store
+        self.devices = devices
         self.classifier = classifier
         self.monitor = monitor
         self.password = password
@@ -95,7 +97,7 @@ class App:
         return "".join(f'<option value="{c}"{" selected" if c == selected else ""}>{escape(LABELS[c])}</option>'
                        for c in CATEGORIES)
 
-    def dashboard(self, msg: str = "", ok: bool = True, test: Optional[str] = None) -> str:
+    def dashboard(self, msg: str = "", ok: bool = True, test: Optional[str] = None, device: str = "") -> str:
         csrf = f'<input type=hidden name=csrf value="{self.csrf}">'
         out = []
         if msg:
@@ -125,9 +127,11 @@ Domainname und Seiteninhalt und erkennt dadurch ähnliche, unbekannte Seiten sel
         if self.monitor is not None:
             rows = []
             for ev in list(self.monitor.recent)[::-1][:50]:
-                client = f"{ev.hostname} ({ev.client})" if ev.hostname else ev.client
+                name_link = "" if ev.device or self.devices is None else (
+                    f' <a class=muted href="/?{urlencode({"device": ev.mac or ev.client})}#geraete">benennen</a>')
                 rows.append(
-                    f"<tr><td>{ev.ts:%d.%m. %H:%M:%S}</td><td>{escape(client)}</td><td>{escape(ev.domain)}</td>"
+                    f"<tr><td>{ev.ts:%d.%m. %H:%M:%S}</td><td>{escape(device_label(ev))}{name_link}</td>"
+                    f"<td>{escape(ev.domain)}</td>"
                     f"<td>{tag(ev.category)}</td><td class=muted>{escape(ev.detected_by)}</td><td>"
                     f'<form class=inline method=post action="/sites">{csrf}'
                     f'<input type=hidden name=site value="{escape(ev.site)}"><input type=hidden name=category value=none>'
@@ -136,6 +140,9 @@ Domainname und Seiteninhalt und erkennt dadurch ähnliche, unbekannte Seiten sel
             out.append("<section><h2>Letzte Alarme</h2>" + (
                 "<table><tr><th>Zeit</th><th>Gerät</th><th>Domain</th><th>Kategorie</th><th>Erkannt</th><th></th></tr>"
                 + "".join(rows) + "</table>" if rows else "<p class=muted>Noch keine Alarme.</p>") + "</section>")
+
+        if self.devices is not None:
+            out.append(self.devices_section(csrf, device))
 
         with self.store.lock:
             sites = sorted(self.store.sites.items(), key=lambda kv: kv[1].get("added", ""), reverse=True)
@@ -170,6 +177,33 @@ vom LLM gelernt: {s['stats'].get('learned_ai', 0)}</p>
 <p class=muted>API: <code>curl -u admin:PASSWORT -X POST -H 'Content-Type: application/json'
 -d '{{"site":"neueseite.io","category":"gaming"}}' {escape(self.public_url or 'http://host:8080')}/api/sites</code></p></section>""")
         return self.page("".join(out))
+
+    def devices_section(self, csrf: str, prefill: str = "") -> str:
+        rows = []
+        for d in self.devices.list():
+            mac = escape(d["mac"]) + (' <span class=muted title="Private WLAN-Adresse (z.B. iPad/iPhone)">'
+                                      "privat</span>" if d["random_mac"] else "")
+            delete = (f'<form class=inline method=post action="/devices/delete">{csrf}'
+                      f'<input type=hidden name=device value="{escape(d["key"])}">'
+                      f"<button class=ghost>Name löschen</button></form>") if d["name"] else ""
+            rows.append(
+                f'<tr><td><form class=inline method=post action="/devices">{csrf}'
+                f'<input type=hidden name=device value="{escape(d["key"])}">'
+                f'<input name=name value="{escape(d["name"])}" placeholder="{escape(d["hostname"] or "Name")}">'
+                f" <button>Speichern</button></form> {delete}</td>"
+                f'<td>{escape(d["hostname"])} <span class=muted>{escape(d["source"])}</span></td>'
+                f'<td>{escape(d["ip"])}</td><td>{mac}</td><td class=muted>{escape(d["last_seen"])}</td></tr>')
+        table = ("<table><tr><th>Name</th><th>Erkannter Gerätename</th><th>IP</th><th>MAC</th><th>Zuletzt</th></tr>"
+                 + "".join(rows) + "</table>") if rows else "<p class=muted>Noch keine Geräte gesehen.</p>"
+        return f"""<section id=geraete><h2>Geräte</h2>
+<form method=post action="/devices">{csrf}
+<input name=device placeholder="MAC- oder IP-Adresse" value="{escape(prefill)}" required>
+<input name=name placeholder="z.B. iPad 07 – Klasse 3a" required {"autofocus" if prefill else ""}>
+<button>Gerät benennen</button></form>
+<p class=muted>Gerätenamen (z.B. „Leos iPad“) werden automatisch aus DHCP und Bonjour erkannt. Ein hier vergebener
+Name hat Vorrang und erscheint in der Teams-Meldung. Am zuverlässigsten ist die MAC-Adresse – bei iPads mit
+„Private WLAN-Adresse“ bleibt sie pro WLAN gleich, solange „Rotierend“ nicht aktiv ist.</p>
+{table}</section>"""
 
     def feedback_page(self, site: str, cat: str, sig: str, done: bool = False) -> str:
         if done:
@@ -252,7 +286,9 @@ def make_handler(app: App):
                 return self._deny()
             if u.path == "/":
                 return self._send(200, app.dashboard(q.get("msg", ""), q.get("ok", "1") == "1",
-                                                     test=q.get("domain") or None))
+                                                     test=q.get("domain") or None, device=q.get("device", "")))
+            if u.path == "/api/devices" and app.devices is not None:
+                return self._json(200, app.devices.list())
             if u.path == "/api/sites":
                 with app.store.lock:
                     return self._json(200, app.store.sites)
@@ -288,6 +324,12 @@ def make_handler(app: App):
                 except ValueError as e:
                     return self._json(400, {"error": str(e)})
                 return self._json(201, {"site": site, **app.store.sites[site]})
+            if u.path == "/api/devices" and app.devices is not None:
+                try:
+                    key = app.devices.set_name(str(data.get("device", "")), str(data.get("name", "")))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(201, {"device": key, "name": app.devices.names[key]["name"]})
 
             if not hmac.compare_digest(data.get("csrf", ""), app.csrf):
                 return self._send(403, "CSRF-Token ungültig", "text/plain; charset=utf-8")
@@ -297,6 +339,13 @@ def make_handler(app: App):
                                               source="user", note=data.get("note", ""))
                     label = LABELS.get(app.store.sites[site]["category"])
                     return self._redirect("/?" + urlencode({"msg": f"{site} gespeichert als {label}"}))
+                if u.path == "/devices" and app.devices is not None:
+                    key = app.devices.set_name(data.get("device", ""), data.get("name", ""))
+                    return self._redirect("/?" + urlencode({"msg": f"{key} heisst jetzt "
+                                                                   f"„{app.devices.names[key]['name']}“"}) + "#geraete")
+                if u.path == "/devices/delete" and app.devices is not None:
+                    app.devices.remove_name(data.get("device", ""))
+                    return self._redirect("/?" + urlencode({"msg": "Name entfernt"}) + "#geraete")
                 if u.path == "/sites/delete":
                     site = parse_site_input(data.get("site", ""))
                     app.store.remove_site(site)
@@ -313,6 +362,12 @@ def make_handler(app: App):
             if u.path == "/api/sites":
                 try:
                     removed = app.store.remove_site(q.get("site", ""))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(200 if removed else 404, {"removed": removed})
+            if u.path == "/api/devices" and app.devices is not None:
+                try:
+                    removed = app.devices.remove_name(q.get("device", ""))
                 except ValueError as e:
                     return self._json(400, {"error": str(e)})
                 return self._json(200 if removed else 404, {"removed": removed})

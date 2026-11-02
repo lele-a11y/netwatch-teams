@@ -13,6 +13,7 @@ Nachricht (Adaptive Card) in einen Microsoft-Teams-Kanal, wenn ein Gerät
 
 1. **Quellen** – DNS-Anfragen (UDP/TCP 53) und der Hostname aus dem TLS-Handshake (SNI, TCP 443).
    HTTPS-Inhalte werden *nicht* entschlüsselt.
+   Zusätzlich DHCP und Bonjour/mDNS, um den Gerätenamen zu erkennen (z.B. „Leos-iPad“).
 2. **Regeln** – kuratierte Domainlisten pro Kategorie (`netwatch/classifier.py`, erweiterbar in der Config).
 3. **Heuristik** – Schlüsselwörter im Domainnamen (`proxy`, `unblock`, `unblocked-games`, `spiele` …).
 4. **Selbstlernende KI** (standardmässig an) – zwei lokale Modelle (Naive Bayes, ohne Cloud):
@@ -56,6 +57,26 @@ curl -u admin:PASSWORT -X POST -H 'Content-Type: application/json' \
 API: `GET/POST/DELETE /api/sites`, `GET /api/classify?domain=…`, `GET /api/alerts`, `GET /api/learned`, `GET /api/status`.
 
 Alles Gelernte liegt in `data/learned.json` (Pfad: `learning.data_dir`) – fürs Backup diese Datei sichern.
+
+## Welches iPad war es?
+
+![Geräte in der Web-Oberfläche](docs/devices.png)
+
+In jeder Teams-Meldung steht das Gerät mit Name, IP- und MAC-Adresse, z.B. **„iPad 07 – Klasse 3a hat youtube.com geöffnet“**.
+Der Name kommt aus (höchste Priorität zuerst):
+
+1. **Von dir vergebenen Namen** – Web-Oberfläche → „Geräte“, in Teams über den Button **„Gerät benennen“**,
+   per CLI `netwatch -c config.yaml name 3a:1f:22:aa:bb:01 "iPad 07 – Klasse 3a"` oder `devices.names` in der Config.
+2. **Dem Namen, den das Gerät selbst meldet** – wird passiv aus DHCP-Anfragen und Bonjour/mDNS gelernt
+   (z.B. „Leos-iPad“, „iPad-von-Mia“). Dafür muss netwatch im selben WLAN/LAN-Segment mithören (Router/Gateway).
+3. **DHCP-Leases** von Pi-hole/dnsmasq/OpenWrt (wenn netwatch auf dem DHCP-Server läuft).
+4. **Reverse-DNS**.
+
+Tipp für iPads: Am zuverlässigsten ist die Benennung über die **MAC-Adresse** (Einstellungen → Allgemein → Info → WLAN-Adresse).
+Mit „Private WLAN-Adresse“ ist die MAC pro WLAN fest – steht sie auf **„Rotierend“** (iOS 18), ändert sie sich ab und zu;
+dann für das Schul-WLAN auf „Fest“ stellen (bei verwalteten Geräten per MDM). Ohne MAC (z.B. hinter einem
+zweiten Router) wird nach IP benannt – dann DHCP-Reservationen verwenden.
+`netwatch -c config.yaml devices` listet alle erkannten Geräte.
 
 ## Wo muss es laufen?
 
@@ -134,7 +155,7 @@ Ohne LLM funktioniert die selbstlernende KI trotzdem (Regeln + lokale Modelle + 
   trotzdem, ausser bei **Encrypted Client Hello (ECH)** oder **QUIC/HTTP3** (UDP 443).
   Empfehlung: bekannte DoH-Resolver und ggf. UDP 443 in der Firewall sperren (Browser fallen dann auf TCP zurück).
 * **VPNs** verbergen alles – erkannt wird höchstens der Aufruf der VPN-/Proxy-Webseite.
-* Geräte werden per IP (+ Reverse-DNS-Name) gemeldet; für die Zuordnung zu Personen DHCP-Reservationen nutzen.
+* Geräte werden mit Name/IP/MAC gemeldet (siehe „Welches iPad war es?“); Namen werden in `data/devices.json` gespeichert.
 
 ## Rechtliches (CH)
 
