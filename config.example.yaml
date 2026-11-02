@@ -7,14 +7,15 @@ teams:
 
 capture:
   interface: null            # z.B. eth0, br-lan; null = Standard-Interface
-  bpf_filter: "udp port 53 or tcp port 53 or tcp port 443"
+  # 67/68 = DHCP, 5353 = Bonjour/mDNS -> daraus wird der Gerätename (z.B. "Leos-iPad") gelernt
+  bpf_filter: "udp port 53 or tcp port 53 or tcp port 443 or udp port 67 or udp port 68 or udp port 5353"
   ignore_clients: []         # IPs, die nie gemeldet werden (z.B. der DNS-Server/Router selbst)
 
 alerts:
   categories: [youtube, gaming, proxy]
   cooldown_minutes: 10       # pro Gerät max. eine Meldung je Kategorie (bzw. Seite) in diesem Zeitraum
   dedupe_by: category        # category | site
-  resolve_hostnames: true    # Reverse-DNS, damit im Teams-Post der Gerätename steht
+  resolve_hostnames: true    # Reverse-DNS als letzte Quelle für den Gerätenamen
 
 rules:
   keywords: true             # Heuristik: "proxy", "unblock", "games" ... im Domainnamen
@@ -54,6 +55,15 @@ web:
   public_url: ""             # z.B. http://192.168.1.10:8080 – dann bekommt jede Teams-Nachricht
                              # die Buttons "Falsch-Alarm melden" und "Webseiten verwalten"
   secret: ""                 # leer = wird automatisch erzeugt (data/secret.key)
+
+devices:
+  # Welches iPad/Gerät war es? Feste Namen nach MAC- (empfohlen) oder IP-Adresse.
+  # Einfacher: in der Web-Oberfläche unter "Geräte" oder mit  netwatch name <MAC> "iPad 07".
+  # Ohne Namen wird der Name verwendet, den das Gerät selbst meldet (DHCP/Bonjour, z.B. "Leos-iPad").
+  names: {}
+  #  "3a:1f:22:aa:bb:01": "iPad 07 – Klasse 3a"
+  #  "192.168.1.50": "Lehrer-PC"
+  lease_files: null          # null = Pi-hole/dnsmasq/OpenWrt-Leasedateien automatisch suchen
 
 logging:
   level: INFO

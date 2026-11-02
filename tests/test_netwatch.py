@@ -164,7 +164,7 @@ def test_card_payload_shape():
     att = p["attachments"][0]
     assert att["contentType"] == "application/vnd.microsoft.card.adaptive"
     text = json.dumps(att["content"], ensure_ascii=False)
-    assert "laptop-anna.lan (10.0.0.5)" in text and "YouTube" in text
+    assert "**laptop-anna.lan** hat" in text and "10.0.0.5" in text and "YouTube" in text
 
 
 def test_cli_pcap_end_to_end(tmp_path, monkeypatch):

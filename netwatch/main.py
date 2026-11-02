@@ -17,8 +17,9 @@ import yaml
 from . import __version__
 from .classifier import (AIClassifier, Classifier, DEFAULT_IGNORE, DEFAULT_RULES, NONE,
                          YOUTUBE, _matches, normalize)
+from .devices import DeviceRegistry
 from .learning import CATEGORIES, LearningStore
-from .notifier import Deduplicator, Event, TeamsNotifier
+from .notifier import Deduplicator, Event, TeamsNotifier, device_label
 from .sniffer import observation_from_line, observations_from_packet
 from .web import App, Signer, load_secret, start_web
 
@@ -28,7 +29,7 @@ DEFAULT_CONFIG = {
     "teams": {"webhook_url": ""},
     "capture": {
         "interface": None,
-        "bpf_filter": "udp port 53 or tcp port 53 or tcp port 443",
+        "bpf_filter": "udp port 53 or tcp port 53 or tcp port 443 or udp port 67 or udp port 68 or udp port 5353",
         "ignore_clients": [],
     },
     "alerts": {
@@ -60,6 +61,7 @@ DEFAULT_CONFIG = {
         "public_url": "",
         "secret": "",
     },
+    "devices": {"names": {}, "lease_files": None},
     "logging": {"level": "INFO"},
 }
 
@@ -95,6 +97,13 @@ def build_learner(cfg: dict) -> Optional[LearningStore]:
                          none_threshold=float(lc.get("none_threshold", 0.9)))
 
 
+def build_devices(cfg: dict) -> DeviceRegistry:
+    dc = cfg.get("devices") or {}
+    return DeviceRegistry(cfg["learning"]["data_dir"], names=dc.get("names") or {},
+                          resolve_dns=bool(cfg["alerts"].get("resolve_hostnames", True)),
+                          lease_files=dc.get("lease_files"))
+
+
 def build_classifier(cfg: dict, learner: Optional[LearningStore] = None) -> Classifier:
     rules = {k: list(v) for k, v in DEFAULT_RULES.items()}
     for cat, domains in (cfg["rules"].get("extra") or {}).items():
@@ -117,8 +126,10 @@ def resolve_hostname(ip: str) -> str:
 
 class Monitor:
     def __init__(self, cfg: dict, classifier: Classifier, notifier: TeamsNotifier,
-                 dedup: Optional[Deduplicator] = None, async_send: bool = True):
+                 dedup: Optional[Deduplicator] = None, async_send: bool = True,
+                 devices: Optional[DeviceRegistry] = None):
         self.cfg = cfg
+        self.devices = devices
         self.classifier = classifier
         self.notifier = notifier
         self.dedup = dedup or Deduplicator(int(cfg["alerts"]["cooldown_minutes"] * 60))
@@ -174,7 +185,11 @@ class Monitor:
             return None
         ev = Event(client=client, domain=domain, category=v.category, site=site,
                    source=source, detected_by=v.source, reason=v.reason)
-        log.warning("ALARM %s: %s -> %s [%s via %s/%s]", v.category, client, domain, site, source, v.source)
+        if self.devices is not None:
+            dev = self.devices.identify(client, resolve=False)
+            ev.device, ev.hostname, ev.mac = dev.name, dev.hostname, dev.mac
+        log.warning("ALARM %s: %s -> %s [%s via %s/%s]", v.category, device_label(ev), domain, site, source,
+                    v.source)
         self.recent.append(ev)
         if self.async_send:
             threading.Thread(target=self._deliver, args=(ev,), daemon=True).start()
@@ -183,8 +198,11 @@ class Monitor:
         return ev
 
     def _deliver(self, ev: Event) -> None:
-        if self.cfg["alerts"].get("resolve_hostnames") and ev.client != "unbekannt":
-            ev.hostname = resolve_hostname(ev.client)
+        if not ev.device and not ev.hostname and ev.client != "unbekannt":
+            if self.devices is not None:
+                ev.hostname = self.devices.identify(ev.client).hostname
+            elif self.cfg["alerts"].get("resolve_hostnames"):
+                ev.hostname = resolve_hostname(ev.client)
         self.notifier.send(ev)
 
     def _safe_handle(self, client: str, domain: str, source: str) -> None:
@@ -194,6 +212,8 @@ class Monitor:
             log.exception("Fehler bei Verarbeitung von %s", domain)
 
     def handle_packet(self, pkt) -> None:
+        if self.devices is not None:
+            self.devices.observe(pkt)
         try:
             observations = list(observations_from_packet(pkt))
         except Exception:
@@ -219,7 +239,7 @@ def _web_app(cfg, monitor: Monitor) -> Optional[App]:
         return None
     secret = load_secret(cfg["learning"]["data_dir"], cfg["web"].get("secret", ""))
     return App(learner, monitor.classifier, monitor, password=cfg["web"].get("password", ""),
-               secret=secret, public_url=cfg["web"].get("public_url", ""))
+               secret=secret, public_url=cfg["web"].get("public_url", ""), devices=monitor.devices)
 
 
 def cmd_run(args, cfg, monitor: Monitor) -> int:
@@ -287,6 +307,25 @@ def cmd_remove(args, cfg, monitor: Monitor) -> int:
     return 0
 
 
+def cmd_name(args, cfg, monitor: Monitor) -> int:
+    try:
+        if args.remove:
+            print(f"{args.device}: {'entfernt' if monitor.devices.remove_name(args.device) else 'nicht gefunden'}")
+        else:
+            key = monitor.devices.set_name(args.device, " ".join(args.name))
+            print(f"{key} = {' '.join(args.name)}")
+    except ValueError as e:
+        log.error("%s", e)
+        return 1
+    return 0
+
+
+def cmd_devices(args, cfg, monitor: Monitor) -> int:
+    for d in monitor.devices.list():
+        print(f"{d['ip']:16} {d['mac'] or '-':18} {d['name'] or '-':25} {d['hostname'] or '-':25} {d['last_seen']}")
+    return 0
+
+
 def cmd_classify(args, cfg, monitor: Monitor) -> int:
     for d in args.domains:
         v = monitor.classifier.classify(d)
@@ -299,7 +338,7 @@ def cmd_test_webhook(args, cfg, monitor: Monitor) -> int:
         log.error("Kein Webhook konfiguriert (config.yaml teams.webhook_url oder TEAMS_WEBHOOK_URL).")
         return 1
     ev = Event(client="192.168.1.99", domain="www.youtube.com", category=YOUTUBE, site="youtube.com",
-               source="test", detected_by="rule", reason="Testnachricht von netwatch")
+               source="test", detected_by="rule", reason="Testnachricht von netwatch", device="Test-iPad")
     return 0 if monitor.notifier.send(ev) else 1
 
 
@@ -326,6 +365,11 @@ def main(argv=None) -> int:
     c = sub.add_parser("classify", help="Domains testweise klassifizieren")
     c.add_argument("domains", nargs="+")
     sub.add_parser("test-webhook", help="Testnachricht an Teams senden")
+    nm = sub.add_parser("name", help='Gerät benennen, z.B.: name aa:bb:cc:dd:ee:ff "iPad 07 Klasse 3a"')
+    nm.add_argument("device", help="MAC- oder IP-Adresse")
+    nm.add_argument("name", nargs="*")
+    nm.add_argument("--remove", action="store_true", help="Namen wieder entfernen")
+    sub.add_parser("devices", help="Bekannte Geräte auflisten")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -339,9 +383,10 @@ def main(argv=None) -> int:
                              public_url=cfg["web"].get("public_url", "") if cfg["web"].get("enabled") else "",
                              signer=signer)
     monitor = Monitor(cfg, build_classifier(cfg, learner), notifier,
-                      async_send=args.cmd == "run")
+                      async_send=args.cmd == "run", devices=build_devices(cfg))
     handlers = {"run": cmd_run, "pcap": cmd_pcap, "stdin": cmd_stdin, "web": cmd_web, "add": cmd_add,
-                "remove": cmd_remove, "classify": cmd_classify, "test-webhook": cmd_test_webhook}
+                "remove": cmd_remove, "name": cmd_name, "devices": cmd_devices, "classify": cmd_classify,
+                "test-webhook": cmd_test_webhook}
     try:
         return handlers[args.cmd](args, cfg, monitor)
     except KeyboardInterrupt:
